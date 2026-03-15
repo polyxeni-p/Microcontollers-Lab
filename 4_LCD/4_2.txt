@@ -1,0 +1,130 @@
+#define F_CPU 16000000UL
+#include <avr/io.h>
+#include <avr/cpufunc.h>//gia nop
+#include <util/delay.h>
+#include <stdint.h>
+uint16_t adc_value;
+float paragodas=(125.0/256.0);
+uint8_t dekades;
+uint8_t monades;
+uint8_t dekadiko_1;
+uint8_t dekadiko_2;
+
+void write_2_nibbles(uint8_t x){
+	int8_t low_bits;
+	low_bits = PIND & 0x0F;
+	PORTD = low_bits | (x & 0xF0);   // (high) keep PD0–PD3,  D7–D4
+	PORTD |=0b00001000;             // E = 1
+	_NOP();
+	_NOP();
+	PORTD &= ~(0b00001000);             // E = 0
+	PORTD = low_bits | ((x << 4) & 0xF0); //(low)
+	PORTD |=  (0b00001000);             // E = 1
+	_NOP();
+	_NOP();
+	PORTD &= ~(0b00001000);             // E = 0
+}
+void digits(uint16_t x)   //  x = r29:r28
+{
+	dekades= x / 1000;
+	x= x % 1000;
+
+	monades= x / 100;
+	x= x % 100;
+
+	dekadiko_1 = x / 10;
+	dekadiko_2 = x % 10;
+}
+void lcd_command(int x){
+	PORTD&=~(0b00000100); //set pd2 clear
+	write_2_nibbles(x);
+	_delay_us(250);
+}
+void lcd_clear_display(void){
+
+	lcd_command(0x01);
+	_delay_ms(5);
+	
+}
+void lcd_init(){
+	_delay_ms(200);
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x30;//8 bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x30;//8 bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x30;//8 bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x20;//4bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	lcd_command(0x28);       // 5x8 dots, 2 lines
+	lcd_command(0x0C);       // display on, cursor off
+	lcd_clear_display();     // clear
+	lcd_command(0x06);       // entry mode set: increment, no shift
+}
+
+void lcd_data(uint16_t data)
+{
+	PORTD |= (0b00000100);     // RS = 1 -> Data
+	write_2_nibbles(data);     // 2 nibbles
+	_delay_us(250);            // wait 250 usec
+	
+}
+
+
+
+int x;
+int main(){
+	DDRD=0xFF; //exodos h portd
+	lcd_init();
+	ADMUX=0b01000011; //REFS0=1,ADLAR=0,MUX=0011 GIA ADC3 SOS ISWS THELEI 0001  GIA ADC0
+	ADCSRA=0b10000111;//NO ADC INTERRUPT ADC ENABLE fadc=125kHz
+	while(1){
+		ADCSRA |= (1<<ADSC);             // start conversion
+		while (ADCSRA & (1<<ADSC));      // polling
+		// ready adc
+		adc_value = ADC * paragodas;
+
+		digits(adc_value);
+		lcd_command(0x80);   // 1h grammi
+
+		x=(0x30)+dekades;
+		lcd_data(x);
+		
+		x=(0x30)+monades;
+		lcd_data(x);
+		
+		lcd_data('.');
+		
+		x=(0x30)+dekadiko_1;
+		lcd_data(x);
+		
+		x=(0x30)+dekadiko_2;
+		lcd_data(x);
+		_delay_ms(150);
+		lcd_clear_display();
+	}
+}

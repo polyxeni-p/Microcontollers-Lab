@@ -1,0 +1,317 @@
+#define F_CPU 16000000UL //16MHz freq
+#include <avr/io.h> 
+#include <avr/interrupt.h> 
+#include <util/delay.h>
+
+#define PCA9555_0_ADDRESS 0x40 //A0=A1=A2=0 by hardware
+
+//------R/W bit------------------
+#define TWI_READ  1			   //reading from twi device 
+#define TWI_WRITE 0            //writing to twi device 
+
+#define SCL_CLOCK  100000UL	   //=Fscl, twi clock in Hz 100KHz freq kai kathorizei frequency epikoinwnias 
+
+//Fscl=Fcpu/(16+2*TWBR0_VALUE*PRESCALER_VALUE), prescaler=1
+#define TWBR0_VALUE ((F_CPU/SCL_CLOCK)-16)/2
+
+// PCA9555 REGISTERS
+typedef enum {   //se kathe addr antistixei enas reg
+	REG_INPUT_0			 = 0,
+	REG_INPUT_1			 = 1,
+	REG_OUTPUT_0		 = 2,
+	REG_OUTPUT_1	     = 3,
+	REG_POLARITY_INV_0	 = 4,
+	REG_POLARITY_INV_1	 = 5,
+	REG_CONFIGURATION_0	 = 6,
+	REG_CONFIGURATION_1	 = 7
+} PCA9555_REGISTERS;
+
+//AVR Master (transmitter and receiver)
+//->transmitter otan grafei ston PCA9555 (Slave)
+//->receiver otan diavazei apo PCA9555 (Slave)
+
+//----------- Master Transmitter/Receiver -------------------
+#define TW_START		0x08		//start
+#define TW_REP_START	0x10		//repeated start
+
+//---------------- Master Transmitter ----------------------
+#define TW_MT_SLA_ACK	0x18		//ack apo siskevi otan stelnw addr
+#define TW_MT_SLA_NACK	0x20		//nack apo siskevi otan stelnw addr
+#define TW_MT_DATA_ACK	0x28		//ack otan steilw data
+
+
+//---------------- Master Receiver ----------------
+#define TW_MR_SLA_ACK	0x40		//ack apo siskevi otan stelnw addr
+#define TW_MR_SLA_NACK	0x48		//nack apo siskevi otan stelnw addr
+#define TW_MR_DATA_NACK	0x58		//an den dwsw nack termatizw me stop
+
+#define TW_STATUS_MASK  0b11111000        //keep only TWS[7:3]
+#define TW_STATUS (TWSR0 & TW_STATUS_MASK)
+
+//-----------------initialize TWI clock--------------------
+void twi_init(void)
+{
+	TWSR0 = 0;	// PRESCALER_VALUE=1
+	TWBR0 = TWBR0_VALUE;
+}
+
+/*// Read one byte from the twi device (request more data from device)
+unsigned char twi_readAck(void)
+{
+	TWCR0 = (1<<TWINT) | (1<<TWEN) | (1<<TWEA); //TWINT oloklirwsi diergasias, TWEA gia ACK, TWEN enable TWI
+	while(!(TWCR0 & (1<<TWINT)));
+	return TWDR0;
+}
+*/
+
+//diavazei teleutaio byte
+//Read one byte from the twi device, read is followed by a stop condition
+unsigned char twi_readNak(void)
+{
+	TWCR0 = (1<<TWINT) | (1<<TWEN);
+	while(!(TWCR0 & (1<<TWINT)));
+	return TWDR0;
+}
+
+
+// Issues a start condition and sends address and transfer direction.
+// return 0 = device accessible, 1= failed to access device
+//-----------------------stelnei START + ADDR(R/W) kai perimenei ACK--------------------------
+unsigned char twi_start(unsigned char address)
+{
+	uint8_t   twi_status;
+	
+	// send START condition
+	TWCR0 = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
+	
+	// wait until transmission completed
+	while(!(TWCR0 & (1<<TWINT)));
+	
+	// check value of TWI Status Register.
+	twi_status = TW_STATUS & 0xF8;
+	if ( (twi_status != TW_START) && (twi_status != TW_REP_START)) return 1;
+	
+	// send device address
+	TWDR0 = address;
+	TWCR0 = (1<<TWINT) | (1<<TWEN);
+	
+	// wail until transmission completed and ACK/NACK has been received
+	while(!(TWCR0 & (1<<TWINT)));
+	
+	// check value of TWI Status Register.
+	twi_status = TW_STATUS & 0xF8;
+	if ( (twi_status != TW_MT_SLA_ACK) && (twi_status != TW_MR_SLA_ACK) ) //write or read mode 
+	{
+		return 1;
+	}
+	
+	return 0;
+}
+
+//--------------------perimenei mexri na einai etoimi h siskevi gia na kanei start+addr----------------------
+// Use ack polling to wait until device is ready
+void twi_start_wait(unsigned char address)
+{
+	uint8_t   twi_status;
+	
+	while ( 1 )
+	{
+		// send START condition
+		TWCR0 = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
+		
+		// wait until transmission completed
+		while(!(TWCR0 & (1<<TWINT)));
+		
+		// check value of TWI Status Register.
+		twi_status = TW_STATUS & 0xF8;
+		if ( (twi_status != TW_START) && (twi_status != TW_REP_START)) continue; //start while again
+		
+		// send device address
+		TWDR0 = address;
+		TWCR0 = (1<<TWINT) | (1<<TWEN);
+		
+		// wail until transmission completed
+		while(!(TWCR0 & (1<<TWINT)));
+		
+		// check value of TWI Status Register.
+		twi_status = TW_STATUS & 0xF8;
+		if ( (twi_status == TW_MT_SLA_NACK )||(twi_status ==TW_MR_DATA_NACK) )
+		{
+			/* device busy, send stop condition to terminate write operation */
+			TWCR0 = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
+			
+			// wait until stop condition is executed and bus released
+			while(TWCR0 & (1<<TWSTO));
+			
+			continue; //start while again
+		}
+		break; //sending addr was successful
+	}
+}
+
+//------------------------stelnei 1 byte sti siskevi (write)----------------------------
+//  Send one byte to twi device,  Return 0 if write successful or 1 if write failed
+unsigned char twi_write( unsigned char data )
+{
+	// send data to the previously addressed device
+	TWDR0 = data;
+	TWCR0 = (1<<TWINT) | (1<<TWEN);
+	
+	// wait until transmission completed
+	while(!(TWCR0 & (1<<TWINT)));
+	if( (TW_STATUS & 0xF8) != TW_MT_DATA_ACK) return 1;
+	return 0;
+}
+
+//-------------------repeated start + ADDR(R/W) kai perimenei ACK----------------------------
+// Send repeated start condition, address, transfer direction
+//Return:  0 device accessible 1 failed to access device
+unsigned char twi_rep_start(unsigned char address)
+{
+	return twi_start( address );
+}
+
+//-----------------STOP----------------------
+// Terminates the data transfer and releases the twi bus
+void twi_stop(void)
+{
+// send stop condition
+TWCR0 = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
+
+// wait until stop condition is executed and bus released
+while(TWCR0 & (1<<TWSTO));
+}
+
+//-------------PCA9555_0 write kai read---------------------
+void PCA9555_0_write(PCA9555_REGISTERS reg, uint8_t value)
+{
+	twi_start_wait(PCA9555_0_ADDRESS + TWI_WRITE);
+	twi_write(reg);
+	twi_write(value);
+	twi_stop();
+}
+uint8_t PCA9555_0_read(PCA9555_REGISTERS reg)
+{
+	uint8_t ret_val;
+	twi_start_wait(PCA9555_0_ADDRESS + TWI_WRITE); //prwta write+addr kai meta read
+	twi_write(reg);
+	twi_rep_start(PCA9555_0_ADDRESS + TWI_READ);
+	ret_val = twi_readNak();
+	twi_stop();
+	return ret_val; 	
+}
+
+
+
+//ws edw einai ta dosmena apo pdf
+
+uint8_t scan_row(int numline){
+	uint8_t check_input=0;
+	if(numline==0){
+		PCA9555_0_write(REG_OUTPUT_1,0b11111110); //output mono h  I01_0
+		_delay_ms(1);
+		check_input=PCA9555_0_read(REG_INPUT_1) & 0xF0;
+	}
+	else if(numline==1){
+		PCA9555_0_write(REG_OUTPUT_1,0b11111101);//output mono h  I01_1
+		_delay_ms(1);
+		check_input=PCA9555_0_read(REG_INPUT_1) & 0xF0;
+	}
+	else if(numline==2){
+		PCA9555_0_write(REG_OUTPUT_1,0b11111011);//output mono h  I01_2
+		_delay_ms(1);
+		check_input=PCA9555_0_read(REG_INPUT_1) & 0xF0;
+	}
+	else if(numline==3){
+		PCA9555_0_write(REG_OUTPUT_1,0b11110111);//output mono h  I01_3
+		_delay_ms(1);
+		check_input=PCA9555_0_read(REG_INPUT_1) & 0xF0;
+	}
+	return check_input>>4;
+}
+uint16_t scan_keypad(){
+	uint16_t full_mask=0x0000;
+	for(int i=0;i<4;i++){
+		full_mask|=(scan_row(i)<<(4*i));
+	}
+	return full_mask;
+}
+uint16_t scan_keypad_rising_edge(){
+	static uint16_t pressed_keys=0x0000;
+	uint16_t current_state;
+	uint16_t pressed_keys_tempo=~scan_keypad(); //1 patima diladi high active
+	_delay_ms(20);
+	pressed_keys_tempo&=~scan_keypad(); //tropopoisi 1 patima
+	current_state=pressed_keys_tempo& (~pressed_keys);//pressed_keys_tempo thetiki logiki, ~pressed_keys arnitiki logiki wste na min kratisw ayta poy eixan patithei kai twra kai prin
+	pressed_keys=pressed_keys_tempo;
+	return current_state;
+}
+
+int keypad_to_ascii(void){
+    int patimeno =  scan_keypad_rising_edge();
+	int ascicode = 0;                         // default 0
+
+	// 4 LSBs  ->  * 0 # D
+	if      (patimeno == 0x0001) ascicode = '*';
+	else if (patimeno == 0x0002) ascicode = '0';
+	else if (patimeno == 0x0004) ascicode = '#';
+	else if (patimeno == 0x0008) ascicode = 'D';
+
+	// next 4 bits -> 7 8 9 C
+	else if (patimeno == 0x0010) ascicode = '7';
+	else if (patimeno == 0x0020) ascicode = '8';
+	else if (patimeno == 0x0040) ascicode = '9';
+	else if (patimeno == 0x0080) ascicode = 'C';
+
+	// next 4 bits -> 4 5 6 B
+	else if (patimeno == 0x0100) ascicode = '4';
+	else if (patimeno == 0x0200) ascicode = '5';
+	else if (patimeno == 0x0400) ascicode = '6';
+	else if (patimeno == 0x0800) ascicode = 'B';
+
+	// MSBs-> 1 2 3 A
+	else if (patimeno == 0x1000) ascicode = '1';
+	else if (patimeno == 0x2000) ascicode = '2';
+	else if (patimeno == 0x4000) ascicode = '3';
+	else if (patimeno == 0x8000) ascicode = 'A';
+	return ascicode;   // 0 if nothing pressed
+}
+int main(){
+twi_init();
+int first;
+int second;
+DDRB=0xFF;
+PORTB=0X00;
+PCA9555_0_write(REG_CONFIGURATION_1,0xF0);
+while(1){
+        do {
+            first = keypad_to_ascii();   
+        } while (first == 0);
+
+        do {
+            second = keypad_to_ascii(); 
+        } while (second == 0);
+
+        if (first == '5' && second == '5') {
+            PORTB = 0b00111111;
+            _delay_ms(3000);
+            PORTB = 0x00;
+            _delay_ms(3000);   // lockout 6 sec
+        } 
+		else{
+	 
+		for (int i=0;i<6;i++){
+		PORTB=0b00111111;
+		_delay_ms(500);
+		PORTB=0b00000000;
+		_delay_ms(500);
+	}
+	
+		}
+}
+
+}
+	
+	
+	
+	

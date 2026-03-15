@@ -1,0 +1,83 @@
+.include "m328PBdef.inc"
+.def index=r17
+.def DC_VALUE=r20
+
+.org 0x00
+    rjmp reset
+
+reset:
+
+;Init stack pointer
+ldi r16,high(RAMEND)
+out SPH,r16
+ldi r16,low(RAMEND)
+out SPL,r16
+
+;TCCR1A COM1A1=1, COM1A0=0 non inverting PWM gia PB1, WGM10=1 gia Fast PWM, 8-bit
+ldi  r16, (1<<WGM10) | (1<<COM1A1)
+sts  TCCR1A, r16 //8 bit wgm kai mi adistrefousa xekina apo high kai paei low 
+
+;TCCR1B WGM12=1 gia Fast PWM, 8-bit, CS10=1 gia CLK, afou fpwm=fclk/(N*(1+TOP))
+ldi  r16, (1<<WGM12) | (1<<CS10) //1o fast
+sts  TCCR1B, r16 // apo ton typo bgainei n=1
+
+
+ldi r18,0b00000010
+out DDRB,r18    //exodos to PB1 eisodoi ta ypoloipa
+; pull-ups για PB4, PB5
+ldi  r18, 0b00110000
+out  PORTB, r18
+
+ldi index,8 ;init sthn 8h timi tou pinaka = 50% Duty Cycle
+ldi DC_VALUE, 50
+
+clr  r16         // no need gia ta high bits
+sts  OCR1AH, r16
+ldi r18, 128 ;antistixei stin timi 50% DC
+sts  OCR1AL, r18
+
+;main loop
+duty_change:
+in r19,PINB
+sbrs r19,5  //arnitiki logiki, check PB5
+rcall pb5_on
+sbrs r19,4 //check PB4
+rcall pb4_on
+rjmp duty_change
+
+pb4_on:
+	debounce_4: //gia apofigi spinthirismou
+	in r19,PINB
+	sbrs r19,4
+	rjmp debounce_4
+	cpi index,16 //megisti timi tou pinaka
+	breq duty_change //paramenei sti megisti timi
+	inc index
+	subi DC_VALUE, -6 //+6% DC_VALUE
+	rcall fortosi
+	ret
+
+pb5_on:
+	debounce_5: //gia apofigi spinthirismou
+	in r19,PINB
+	sbrs r19,5
+	rjmp debounce_5
+	cpi index,0 //elaxisti timi tou pinaka 
+	breq duty_change  //paramenei stin elaxisti timi
+    dec index
+	subi DC_VALUE, 6 //-6% DC_VALUE
+	rcall fortosi
+	ret 
+
+fortosi:
+ldi  ZH, high(duty_table*2) ;gia prospelasi ana byte kai oxi word
+ldi  ZL, low(duty_table*2)
+add  ZL, index
+clr r16
+adc  ZH, r16
+lpm  r18, Z
+sts  OCR1AL, r18 ;emfanisi output
+ret
+
+duty_table:
+	.db 5, 20, 36, 51, 66, 82, 97, 112, 128, 143, 158, 173, 189, 204, 219, 235, 250

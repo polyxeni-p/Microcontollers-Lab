@@ -1,0 +1,116 @@
+.include "m328PBdef.inc"
+.equ FOSC_MHZ=16 ;operating frequency
+.equ DEL_mS=500  ;delay in mS
+.equ DEL_NU=FOSC_MHZ*DEL_mS
+.equ DEL_95=FOSC_MHZ*95
+.def count=r16
+
+.org 0x0
+rjmp reset
+
+.org 0x4
+rjmp ISR1
+
+reset:
+
+;Init Stack Pointer
+	ldi r24, LOW(RAMEND)
+	out SPL, r24
+	ldi r24, HIGH(RAMEND)
+	out SPH, r24
+
+;Init PORTB as output
+	ser r24
+	out DDRB, r24
+
+;Init PORTC as output
+	ser r24
+	out DDRC, r24
+
+;Init PORTD as input
+	clr r24
+	out DDRD, r24
+
+;Interrupt INT1 stin katerxomeni akmi
+	ldi r24, (1<<ISC11)|(1<<ISC10)
+	sts EICRA, r24
+
+;Enable the INT1 interrupt (PD3)
+	ldi r24, (1<<INT1)
+	out EIMSK, r24
+
+	ldi count, 0x0 ;arxikopoihsh metriti
+
+	clr r24
+	out PORTC, r24 ;svista led
+
+	sei
+
+;atermono loop metrisi ews 15, exodos PORTB
+loop1:
+	clr r26
+loop2:
+	out PORTB, r26
+
+	ldi r24, low(DEL_NU)
+	ldi r25, high(DEL_NU)
+	rcall delay_mS
+
+	inc r26
+
+	cpi r26, 16
+	breq loop1
+	rjmp loop2
+
+;total delay 1000*F1+6 cycles
+delay_mS:
+
+	ldi r23, 249 ;1c
+loop_inn:
+	dec r23	;1c
+	nop	;1c
+	brne loop_inn ; 1 or 2c (if branch)
+
+	sbiw r24, 1 ;2c
+	brne delay_mS ; 1 or 2c (if branch)
+
+	ret ;4c
+
+;routina INT1 metrisi ews 31 exodos PC5-PC1
+ISR1:
+	push r25
+	push r24
+	in r24, SREG
+	push r24
+
+	spithas:
+		ldi r24, (1 << INTF1) ;midenismos INT1
+		out EIFR, r24
+
+		ldi r24, low(DEL_95)
+		ldi r25, high(DEL_95)
+		rcall delay_mS  ;delay 5ms
+
+		in r24, EIFR
+		sbrc r24, 1 ;skip if INTF1=0 giati otan ginetai interrupt auto einai 0
+		rjmp spithas
+
+	loop_check_PD1:
+		in r24, PIND
+		sbrs r24, 1 ;skip if PD1=1 mi patimeno
+		rjmp return
+
+	inc count
+	sbrc count, 5 ;ektelesi epomenis entolis mono an eftasa sto 32 (00100000b)
+	ldi count, 0 ;reset count
+
+	lsl count
+	out PORTC, count
+	lsr count
+
+return:
+	pop r24
+	out SREG, r24
+	pop r24
+	pop r25
+	reti

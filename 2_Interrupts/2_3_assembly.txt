@@ -1,0 +1,129 @@
+ .include "m328PBdef.inc"
+ .equ FOSC_MHZ=16
+ .equ DEL_mS=1 ;delay=1mS
+ .equ DEL_NU=FOSC_MHZ*DEL_mS
+ .def int_act=r16
+ .equ DEL_95=FOSC_MHZ*95
+
+ .org 0x0
+ rjmp reset
+ .org 0x4
+ rjmp ISR1
+
+ reset:
+ ;Init Stack Pointer
+	ldi r17, LOW(RAMEND)
+	out SPL, r17
+	ldi r17, HIGH(RAMEND)
+	out SPH, r17
+
+;Init PORTB as output
+	ser r17
+	out DDRB, r17
+
+	ldi int_act, 0
+
+	ldi r17, 0b00001000 ;PB3
+	ldi r18, 0b00111111 ;PB5-PB0
+
+
+	ldi r28, low(4000)
+	ldi r29, high(4000)
+
+;Interrupt INT1 stin katerxomeni akmi
+	ldi r19, (1<<ISC11)|(0<<ISC10)
+	sts EICRA, r19
+
+;Enable INT1 interrupt (PD3)
+	ldi r19, (1<<INT1)
+	out EIMSK, r19
+
+	ldi r19, 0 ;zero reg
+	out PORTB, r19;svista led
+
+	sei
+
+main_loop:
+	sbrs int_act, 0 ;skip if interrupt is enabled 
+	rjmp main_loop
+	ldi int_act, 0 ;clear flag
+;anamma PB3 gia 4sec
+counter_of_4000: 
+	out PORTB, r17 ;exodos PB3
+	
+	ldi r24, low(DEL_NU)
+    ldi r25, high(DEL_NU)
+	rcall delay_mS ;delay 1mS
+
+	cpi int_act, 1 ;check an exw kai allo interrupt
+	breq ananewsi
+
+	sbiw r28, 1
+	brne counter_of_4000
+	
+	out PORTB, r19 ;svista led
+	rjmp main_loop
+
+ananewsi:
+	ldi r28, 0xE8    ;  byte (Low)
+    ldi r29, 0x03    ;  byte (High) 1000 
+	clr int_act  ;clear flag
+refresh_out:
+	out PORTB, r18 ;exodos PB5-PB0
+	ldi r24, low(DEL_NU)
+    ldi r25, high(DEL_NU)
+	rcall delay_mS
+	cpi int_act, 1 ;check an exw kai allo interrupt
+	breq ananewsi ;check gia ananewsi tou 1s(ananewsi stin ananewsi)
+	sbiw r28,1
+	brne refresh_out
+	ldi r28, low(3000)
+	ldi r29, high(3000)
+	clr int_act ;clear flag
+	rjmp counter_of_4000
+
+	
+ISR1:
+	push r23
+	push r24
+	push r25
+	in r25, SREG
+	push r25
+
+spithas:
+		ldi r24, (1 << INTF1) ;midenismos INT1
+		out EIFR, r24
+
+		ldi r24, low(DEL_95)
+		ldi r25, high(DEL_95)
+		rcall delay_mS  ;delay 100ms
+
+		in r24, EIFR
+		sbrc r24, 1 ;skip if INTF1=0 giati otan ginetai interrupt auto einai 0
+		rjmp spithas
+
+	ldi int_act, 1 ;set flag
+	
+	ldi r28, low(4000)
+	ldi r29, high(4000) ;arxikopoihsh metriti
+
+	pop r25
+	out SREG, r25
+	pop r25
+	pop r24
+	pop r23
+
+	reti
+
+
+delay_mS:
+	ldi r23, 249 ;1c
+loop_inn:
+	dec r23	;1c
+	nop	;1c
+	brne loop_inn ; 1 or 2c (if branch)
+
+	sbiw r24, 1 ;2c
+	brne delay_mS ; 1 or 2c (if branch)
+
+	ret ;4c

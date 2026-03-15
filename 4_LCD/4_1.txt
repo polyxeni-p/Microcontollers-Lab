@@ -1,0 +1,357 @@
+.include "m328PBdef.inc"
+.def temp=r19
+.def dekades=r16
+.def monades=r17
+.def dekadiko_1=r22
+.def dekadiko_2=r20
+
+.org 0x00
+    rjmp reset
+.org TIMER1_COMPAaddr ;timer vector
+    rjmp ISR_TIMER1
+.org 0x02A 
+    rjmp ISR_ADC
+  
+reset:
+ldi r16, HIGH(RAMEND)
+out SPH, r16
+ldi r16, LOW(RAMEND)
+out SPL, r16
+
+;OCR1A=62499 (16M/256) GIATI 62499*16*10^(-3)=0.999984S diladi 1S
+ldi r16,HIGH(62499)
+sts OCR1AH,r16
+ldi r16,LOW(62499)
+sts OCR1AL,r16
+
+;ctc mode kai prescaler
+ldi  r16, (1<<WGM12)|(1<<CS12)
+sts  TCCR1B, r16
+;energopoiisi yperxeilisis
+ldi r24, (1<<OCIE1A)   
+sts TIMSK1, r24
+
+ldi temp, 0b01000011   ; REFS0=1, ADLAR=0, MUX=0011 (ADC3) sos isws thelei 0001
+sts ADMUX, temp
+
+; ADEN=1 => ADC Enable, ADCS=0 => No Conversion, 
+; ADIE=1 => enable adc interrupt, ADPS[2:0]=111 => fADC=16MHz/128=125KHz 
+ldi temp, 0b10001111   
+sts ADCSRA, temp
+
+ldi r24, 0xFF    
+out DDRD, r24
+rcall lcd_init ; arxikopoiohsh se 4 bit mode
+sei ; energopoiisi global interrupts mias kai to zitaei h askisi
+
+main:
+    rjmp main ;atermono loop
+
+
+ISR_ADC:
+    push r16
+    in   r16, SREG
+    push r16
+
+    push r28
+    push r29
+    push r20
+    push r21
+    push r24
+    push r25
+    push r26
+    
+    rcall lcd_init
+    lds  r28, ADCL          ;low byte
+    lds  r29, ADCH          ;high byte
+
+	;VIN=ADC*5/1024 tha to kanoume *100, wste na boroume na kratisoume 2 dekadika
+	;epomenws arkei VIN=ADC*125/256
+    ldi  r20, 125			;r20=125
+
+	;adc low*125
+    mov  r26, r28			; low byte adc
+    mul  r26, r20           ; ADCL*125, result ston double reg r1:r0, afou apotelesma 16bit
+    mov  r21, r1            ; r1 high byte tou mul, afou low byte tha figei logw shift diaresis me 256
+
+	;adc high*125
+    mov  r26, r29			; high byte adc
+    mul  r26, r20           ; ADCH*125, result ston double reg r1:r0, afou apotelesma 16bit
+
+    ; 24-bit result:  (HIGH(adch*125) + carry),(LOW(adch*125)+ HIGH(adcl*125)), (LOW(adcl*125))
+	;prosoxi to (LOW(adcl*125)) feygei me tin diairesi me to 256=2^8
+
+    mov  r28, r0            ; low byte tou adch*125
+    add  r28, r21           ; add high byte tou adcl*125, afou egine xehwrista o pollaplasiasmos 
+    mov  r29, r1            ; high byte tou adch*125
+    brcc no_carry	        ;skip epomeni entoli an de yparxei carry
+    inc  r29                ;auxisi kata ena tou high byte adch*125
+	;result 16bit ston r29:r28
+	
+	no_carry:
+    ldi  r24, 0x80          ; 1h grammi
+    rcall lcd_command
+
+    rcall digits            ; spaei VIN se dekades, monades, dekadiko_1, dekadiko_2
+
+    ldi  r24, '0'           ;0x30 base
+    add  r24, dekades       
+    rcall lcd_data
+
+    ldi  r24, '0'
+    add  r24, monades
+    rcall lcd_data
+
+    ldi  r24, '.'
+    rcall lcd_data
+
+    ldi  r24, '0'
+    add  r24, dekadiko_1
+    rcall lcd_data
+
+    ldi  r24, '0'
+    add  r24, dekadiko_2
+    rcall lcd_data
+
+    pop  r26
+    pop  r25
+    pop  r24
+    pop  r21
+    pop  r20
+    pop  r29
+    pop  r28
+
+    pop  r16
+    out  SREG, r16
+    pop  r16
+   
+
+reti
+
+ISR_TIMER1:
+;energopoiisi metatropis adc
+     in  r16, SREG
+     push r16
+     push temp
+
+	 rcall lcd_clear_display
+     lds temp, ADCSRA
+     ori temp, (1<<ADSC)
+     sts ADCSRA, temp
+
+     pop temp
+     pop r16
+     out SREG, r16
+     reti
+
+
+write_2_nibbles: 
+    push r24        
+    in r25 ,PIND       ;diavazw portD
+    andi r25 ,0x0f     ;kratw pd0-pd3 gia na min ta xalasw
+    ;first half
+    andi r24 ,0xf0     ;kratw ta 4 psila
+    add r24 ,r25       ;vazw apo katw ta xamila
+    out PORTD ,r24     ;stelnw portd
+    sbi PORTD ,PORTD3  ; Enable  Pulse E-1
+    nop 
+    nop 
+    cbi PORTD ,PORTD3   ; E=0 exei ginei lipsi tou nibble
+    ;second half
+    pop r24     ; Rpairnw xana r24 
+    swap r24   ; swap xamila ypsila bits
+    andi r24 ,0xf0  ; idia diadikasia  me prin 
+    add r24 ,r25   
+    out PORTD ,r24    
+    sbi PORTD ,PORTD3  ; idia diadikasia me prin
+    nop 
+    nop 
+    cbi PORTD ,PORTD3 
+    ret
+ 
+;DL = 0    4 bit mode,  
+;N = 1      2 lines 
+;F = 0       5×8 dots 
+;D = 1      display on 
+;C = 0      cursor off 
+;B = 0      blinking off 
+;I/D = 1   DD-RAM address auto increment 
+;SH = 0   shift of entire display off 
+ 
+lcd_init: 
+ 
+    ldi r24 ,low(200)  ; 
+    ldi r25 ,high(200)  ; Wait 200 mSec 
+    rcall wait_msec  ; 
+    
+	cbi PORTD,PORTD2
+    ldi r24 ,0x30   ; command to switch to 8 bit mode 
+    out PORTD ,r24  ; 
+    sbi PORTD ,PORTD3  ; Enable  Pulse 
+    nop 
+    nop 
+    cbi PORTD ,PORTD3 
+    ldi r24 ,250   ; 
+    ldi r25 ,0   ; Wait 250uSec  
+    rcall wait_usec           ; 
+     
+	 cbi PORTD,PORTD2
+    ldi r24 ,0x30   ; command to switch to 8 bit mode 
+    out PORTD ,r24  ; 
+
+    sbi PORTD ,PORTD3  ; Enable  Pulse  
+    nop 
+    nop 
+    cbi PORTD ,PORTD3 
+    ldi r24 ,250   ; 
+    ldi r25 ,0   ; Wait 250uSec  
+    rcall wait_usec           ; 
+     
+	 cbi PORTD,PORTD2
+    ldi r24 ,0x30   ; command to switch to 8 bit mode 
+    out PORTD ,r24  ; 
+    sbi PORTD ,PORTD3  ; Enable  Pulse  
+    nop 
+    nop 
+    cbi PORTD ,PORTD3 
+    ldi r24 ,250                  ; 
+    ldi r25 ,0                    ; Wait 250uSec 
+    rcall wait_usec 
+     
+	 cbi PORTD,PORTD2
+    ldi r24 ,0x20                ; command to switch to 4 bit mode 
+    out PORTD ,r24 
+    sbi PORTD ,PORTD3  ; Enable  Pulse 
+    nop 
+    nop 
+    cbi PORTD ,PORTD3 
+    ldi r24 ,250                  ; 
+    ldi r25 ,0                    ; Wait 250uSec 
+    rcall wait_usec 
+     
+    ldi r24 ,0x28              ;  5x8 dots, 2 lines 
+    rcall lcd_command 
+ 
+    ldi r24 ,0x0c                ; dislay on, cursor off 
+    rcall lcd_command      
+    rcall lcd_clear_display       
+ 
+    ldi r24 ,0x06                ; Increase address, no display shift 
+    rcall lcd_command        ;    
+    ret 
+
+digits:
+    ldi r24,low(1000)
+    ldi r25,high(1000)
+    ldi dekades,0
+    ldi monades,0
+    ldi dekadiko_1,0
+    ldi dekadiko_2,0
+
+    loop_dekades:
+    sub r28,r24 ;afairw synexws 1000=10*100
+    sbc r29,r25
+    inc dekades
+    sbrs r29, 7 ;check an exw arnitiko apotelesma, vlepontas msb
+    rjmp loop_dekades
+
+    clc
+	dec dekades
+    add r28,r24  ;epanafora +1000
+    adc r29,r25
+
+    ldi r25,high(100)
+    ldi r24,low(100)
+
+    loop_monades:
+    sub r28,r24
+    sbc r29,r25
+    inc monades
+    sbrs r29, 7
+    rjmp loop_monades
+
+    clc
+	dec monades
+    add r28,r24  ;epanafora +100
+    adc r29,r25
+
+    ldi r25,high(10)
+    ldi r24,low(10)
+
+    loop_dekadiko_1:
+    sub r28,r24
+    sbc r29,r25
+    inc dekadiko_1
+    sbrs r29, 7
+    rjmp loop_dekadiko_1
+
+    clc
+	dec dekadiko_1
+    add r28,r24  ;epanafora +10
+    adc r29,r25
+
+    ldi r25,high(1)
+    ldi r24,low(1)
+
+    loop_dekadiko_2:
+    sub r28,r24
+    sbc r29,r25
+    inc dekadiko_2
+    sbrs r29, 7
+    rjmp loop_dekadiko_2
+
+	dec dekadiko_2
+    ret
+    
+lcd_command: 
+    cbi PORTD ,PORTD2         ; LCD_RS=0(PD2=0), Instruction  
+    rcall write_2_nibbles    ; send Instruction 
+    ldi r24 ,250                 ; 
+    ldi r25 ,0                   ; Wait 250uSec 
+    rcall wait_usec 
+    ret
+
+lcd_clear_display:  
+    ldi r24 ,0x01                ; clear display command 
+    rcall lcd_command 
+    ldi r24 ,low(5)  ; 
+    ldi r25 ,high(5)  ; Wait 5 mSec 
+    rcall wait_msec  ; 
+     
+    ret
+wait_usec: 
+	sbiw r24 ,1  
+	call delay_8cycles 
+	brne wait_usec 
+	ret 
+	delay_8cycles: 
+	nop 
+	nop 
+	nop 
+	nop 
+	ret 
+
+ 
+wait_msec: 
+    push r24  ; 2 cycles 
+    push r25  ; 2 cycles 
+    ldi r24 , low(999) ; 1 cycle 
+    ldi r25 , high(999) ; 1 cycle  
+    rcall wait_usec ; 998.375 usec   
+    pop r25  ; 2 cycles 
+    pop r24  ; 2 cycles 
+    nop   ; 1 cycle 
+    nop   ; 1 cycle 
+ 
+    sbiw r24 , 1 ; 2 cycles   
+    brne wait_msec ; 1 or 2 cycles 
+ 
+    ret   ; 4 cycles 
+
+lcd_data: 
+    sbi PORTD ,PORTD2  ; LCD_RS=1(PD2=1), Data 
+    rcall write_2_nibbles     ; send data 
+    ldi r24 ,250                 ; 
+    ldi r25 ,0                    ; Wait 250uSec 
+    rcall wait_usec 
+    ret 

@@ -1,0 +1,112 @@
+#define F_CPU 16000000UL //16MHz freq
+#include <avr/io.h> 
+#include <util/delay.h>
+
+uint8_t one_wire_reset(){
+
+    DDRD|=1<<PD4; //set PD4 as output
+    PORTD&=~(1<<PD4); //PD4=0
+    _delay_us(480); //480us delay reset pulse
+
+    DDRD&=~(1<<PD4); //set PD4 as input
+    PORTD&=~(1<<PD4); //disable pull-ups
+    _delay_us(100); //wait 100us for connected devices to transmit the presence pulse
+
+    uint8_t input=PIND; //read input
+    _delay_us(380); //380us delay 
+
+    uint8_t connected_device=0;
+    if(!(input&(1<<PD4))) connected_device=1;
+
+    return connected_device;
+
+}
+
+uint8_t one_wire_receive_bit (){
+    
+    DDRD|=1<<PD4; //set PD4 as output
+    PORTD&=~(1<<PD4); //PD4=0
+    _delay_us(2); //delay 2us
+
+    DDRD&=~(1<<PD4); //set PD4 as input
+    PORTD&=~(1<<PD4); //disable pull-ups
+    _delay_us(10); //wait 10us
+    
+    uint8_t received_bit=0;
+    if(PIND&(1<<PD4)) received_bit=1;
+
+    _delay_us(49); //delay 49us
+
+    return received_bit;    
+        
+}
+
+void one_wire_transmit_bit(uint8_t bit){
+    
+    DDRD|=1<<PD4; //set PD4 as output
+    PORTD&=~(1<<PD4); //PD4=0
+    _delay_us(2); //delay 2us
+
+    if(bit) 
+        PORTD|=1<<PD4; //PD4=1
+    else
+         PORTD&=~(1<<PD4); //PD4=0
+
+    _delay_us(58); //wait 58us for connected device to sample the line
+
+    DDRD&=~(1<<PD4); //set PD4 as input
+    PORTD&=~(1<<PD4); //disable pull-ups
+
+    _delay_us(1); //recovery time
+    
+}
+uint8_t one_wire_receive_byte(){
+    uint8_t received_byte=0;
+    uint8_t received_bit;
+    for(int i=0;i<8;i++){
+        received_bit=one_wire_receive_bit(); //receive each bit
+        received_byte=received_byte >> 1; //lsr in order to make the mask
+        if(received_bit){
+            received_byte|=0b10000000; //or
+        }
+    } 
+        return received_byte;
+}     
+void one_wire_transmit_byte(uint8_t byte_to_send){
+    uint8_t transmit_bit;
+    for(int i=0;i<8;i++){
+        transmit_bit=byte_to_send & 0x01; //apomonwsi lsb
+        one_wire_transmit_bit(transmit_bit); //stelnoume to bit
+        byte_to_send=byte_to_send >> 1;  //shift gia na erthei h seira tou epomenou
+
+    }
+}
+
+int16_t temperature_measure(){  
+
+    int16_t temperature=0;
+    if(!(one_wire_reset())){
+        return 0x8000;  //error handler
+    }
+    one_wire_transmit_byte(0xCC);
+    one_wire_transmit_byte(0x44); //xekinaei metrisi
+    while(!one_wire_receive_bit()); //gia oloklirosi metrisis 
+    if(!(one_wire_reset())){ //nea arxikopoiisi
+        return 0x8000;
+    } 
+    one_wire_transmit_byte(0xCC);
+    one_wire_transmit_byte(0xBE);
+    temperature=one_wire_receive_byte();
+    temperature|=(int16_t)one_wire_receive_byte()<<8; //enwnw lsb kai msb
+    return temperature;
+
+}
+
+int main(){
+    int16_t temp=0;
+
+    while(1){
+        temp=temperature_measure();
+        _delay_ms(1000); //delay 1s
+    }
+}

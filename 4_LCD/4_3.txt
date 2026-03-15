@@ -1,0 +1,174 @@
+#define F_CPU 16000000UL      
+#include <avr/io.h>
+#include <avr/cpufunc.h>//gia nop
+#include <util/delay.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <avr/interrupt.h>
+int Vin;
+volatile bool sos;
+volatile uint16_t adc_value;
+float paragodas1=(5.0/1024.0);
+float paragodas2=(5.0/1024.0)*(10000.0/129.0);
+uint8_t dekades;
+uint8_t monades;
+uint8_t dekadiko_1;
+uint8_t dekadiko_2;
+volatile float co;
+void write_2_nibbles(uint8_t x){
+	int8_t low_bits;
+	low_bits = PIND & 0x0F;
+	PORTD = low_bits | (x & 0xF0);   // PD0–PD3
+	PORTD |=0b00001000;             // E = 1
+	_NOP();
+	_NOP();
+	PORTD &= ~(0b00001000);             // E = 0
+	PORTD = low_bits | ((x << 4) & 0xF0);
+	PORTD |=  (0b00001000);             // E = 1
+	_NOP();
+	_NOP();
+	PORTD &= ~(0b00001000);             // E = 0
+}
+void digits(uint16_t x)   //x = r29:r28
+{
+	dekades= x / 1000;
+	x= x % 1000;
+
+	monades= x / 100;
+	x= x % 100;
+
+	dekadiko_1 = x / 10;
+	dekadiko_2 = x % 10;
+}
+void lcd_command(int x){
+	PORTD&=~(0b00000100); //set pd2 clear
+	write_2_nibbles(x);
+	_delay_us(250);
+}
+void lcd_clear_display(void){
+
+	lcd_command(0x01);
+	_delay_ms(5);
+	
+}
+void lcd_init(){
+	_delay_ms(200);
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x30;//8 bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x30;//8 bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x30;//8 bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	PORTD&=~(0b00000100); //set pd2 clear
+	PORTD=0x20;//4bit mode
+	PORTD|=0b00001000;//enable pulse
+	_NOP();
+	_NOP();
+	PORTD&=~(0b00001000);
+	_delay_us(250);
+	
+	lcd_command(0x28);       // 5x8 dots, 2 lines
+	lcd_command(0x0C);       // display on, cursor off
+	lcd_clear_display();     // clear
+	lcd_command(0x06);       // entry mode set: increment, no shift
+}
+
+void lcd_data(uint16_t data)
+{
+	PORTD |= (0b00000100);     // RS = 1 -> Data
+	write_2_nibbles(data);     //  2 nibbles
+	_delay_us(250);            // wait 250 usec
+	
+}
+int main(){
+	DDRD=0xFF;
+	DDRB=0xFF;
+	ADMUX=0b01000011;
+	ADCSRA = 0b10001111;
+	sei();
+	lcd_init();
+	_delay_ms(100);
+	while(1){
+		ADCSRA |= (1<<ADSC); //arxizei metatropi
+		if(sos){                 //gas detected
+			lcd_command(0x80);   // first line
+	
+			lcd_data('G');
+			lcd_data('A');
+			lcd_data('S');
+			lcd_data(' ');
+			lcd_data('D');
+			lcd_data('E');
+			lcd_data('T');
+			lcd_data('E');
+			lcd_data('C');
+			lcd_data('T');
+			lcd_data('E');
+			lcd_data('D');
+			
+			if( co<117) {//3
+				PORTB=0b00000111;
+			}
+			else if(co<278) {//4
+				PORTB=0b00001111;
+			}
+			else if (co<320) { //5
+				PORTB=0b00011111;
+			}
+			else {
+			PORTB=0b00111111;}
+			_delay_ms(50);
+			PORTB=0b00000000;
+			_delay_ms(50);
+		}
+		else{
+			lcd_clear_display();
+			lcd_command(0x80);   //first line
+			
+			lcd_data('C');
+			lcd_data('L');
+			lcd_data('E');
+			lcd_data('A');
+			lcd_data('R');
+			_delay_ms(100);
+			if(co<38) {//1
+				PORTB=0b00000001;
+			}
+			else PORTB=0b00000011; //2
+			
+			
+			
+			
+		}
+
+	}
+}
+
+ISR(ADC_vect) {
+	adc_value=paragodas2*ADC;
+	co=adc_value- (1000.0/129.0);
+	if(co>=75){
+		sos=true;
+	}
+	else
+	{sos=false;
+	}
+}

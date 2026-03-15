@@ -1,0 +1,55 @@
+.include "m328PBdef.inc"	;ATmega328PB
+.equ FOSC_MHZ=16		    ;MHz
+.equ delay=100				;delay se msec, apo 1 ews 65535
+.equ num=3199
+
+.org 0x0
+	rjmp reset
+
+reset:
+;Init Stack Pointer
+	ldi r26, LOW(RAMEND)	;Init stack sto telos ths RAM
+	out SPL, r26
+	ldi r26, HIGH(RAMEND)
+	out SPH, r26
+
+	ldi r24, low(delay)		; r24:r25 periexoun delay se msec
+	ldi r25, high(delay)
+
+;Init PORTD as output
+	ser r26
+	out DDRD, r26
+
+test_loop:					;anoigokleinoun ta D, menontas x msec se kathe katastasi
+	ser r26
+	out PORTD, r26
+	rcall wait_x_msec
+	clr r26
+	out PORTD, r26
+	rcall wait_x_msec
+	rjmp test_loop
+
+wait_x_msec:		;this routine is used to produce a delay of 12+(16000*delay) cycles, 
+					;meaning of ~16000*delay/16000000=delay/1000 dec=delay msec
+	push r24		;2c save double reg
+	push r25		;2c
+delay_1:
+	ldi r26, low(num) ;1c, r22:r23 periexoun 3199
+	ldi r27, high(num);1c
+
+delay_2:
+	sbiw r26, 1		;2c
+	nop				;1c
+	brne delay_2	;1c or 2c (if branch)
+	sbiw r24, 1		;2c
+	brne delay_1	;1c or 2c (if branch)
+
+	pop r25			;2c	restore double reg
+	pop r24			;2c
+	ret				;4c
+
+	;total cycles: (2+2)+((1+1+2+1+2)+(2+1+2)*3197+(2+1+1+2+2))*(delay-1)+((1+1+2+1+2)+(2+1+2)*3197+(2+1+1+2+1))+(2+2+4)= 
+	;			   4+(7+5*3197+8)*(delay-1)+(7+5*3197+7)+8=
+	;			   12+(15+5*3197)*(delay-1)+(14+5*3197)=
+	;			   12+16000*delay-16000+15999=
+	;			   12+16000*delay

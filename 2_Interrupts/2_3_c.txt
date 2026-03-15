@@ -1,0 +1,60 @@
+#define F_CPU 16000000UL
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdbool.h>
+
+volatile int counter = 0; //counter
+volatile bool flag =false;
+
+ISR(INT1_vect)
+{
+	do {
+		EIFR=(1<<INTF1);
+		_delay_ms(180);		
+	}while(EIFR & (1 << INTF1)); //vgaineis otan EIFR=0 sto psifio tou INTF1
+
+	counter=0;
+	flag=true;
+	
+}
+
+int main(void)
+{
+   DDRB=0xFF; //PORTB exodos
+   PORTB=0x00; //svista led
+   
+   EICRA=(1<<ISC11)|(0<<ISC10); //katerxomeni akmi, otan patame koumpi
+   EIMSK=(1<<INT1); //enable the INT1 interrupt (PD3)
+   sei();
+   
+    while (1) 
+    {
+		if(flag){
+			flag=false;
+			while(counter!=4000){
+				PORTB=0x08; //PB3 on
+				_delay_ms(1);
+				counter++;
+				
+				if(flag){
+					flag=false;
+					counter=0;
+					while(counter!=1000){
+						PORTB=0x3F; //PB5-PB0 on
+						_delay_ms(1);
+						counter++;
+
+					   	if(flag){
+							flag=false;
+							counter=0;
+					        }
+					}
+				counter=1000;	
+				}
+			}
+			PORTB=0x00; //svista led
+			
+		}
+	}
+}

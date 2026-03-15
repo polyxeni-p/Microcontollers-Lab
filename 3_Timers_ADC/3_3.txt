@@ -1,0 +1,73 @@
+#include <avr/io.h>
+#include <stdint.h>
+
+uint8_t index=8;
+uint8_t DC_VALUE=50;
+
+const uint8_t duty_table[]={5,20,36,51,66,82,97,112,128,143,158,173,189,204,219,235,250};
+
+void fortosi(uint8_t i){
+	OCR1AL=duty_table[i];
+	return;
+}
+
+
+int main(void){
+	//PWM sto PB1
+	TCCR1A=	(1<<WGM10)|(1<<COM1A1); //non inverting fast PWM 8 bit
+	TCCR1B=	(1<<WGM12)|(1<<CS10); //fast PWM, CLK
+	
+	DDRB=0b00000010; //exodos PB1, eisodoi PB4, PB5
+	PORTB |= (1<<PB4) | (1<<PB5); //pull-ups gia PB4, PB5
+	
+	DDRD=0; //PORTD eisodos
+	PORTD |= (1<<PD0) | (1<<PD1); //pull-ups gia PD0, PD1
+	
+	OCR1AH=0;
+	OCR1AL=128; //init exodos sto 50% DC
+	
+	//ADC
+	ADMUX=(1<<REFS0)|(1<<ADLAR); //epilogi Vref, left adjusted, pin PC0 (0000)
+	ADCSRA=(1<<ADEN)|(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0); //ADC enable, fadc=125kHz
+	
+	while (1){
+		//mode1
+		if(!(PIND&(1<<PD0))){ //an PD0 patithei mode1 mexri na patithei to PD1 gia mode2
+			while(PIND&(1<<PD1)){  //oso den allaxw mode 
+				if(!(PINB&(1<<PB5))){ //an PB5 patimeno
+					while(!(PINB&(1<<PB5))); //debounce
+					if(index){
+						index--;
+						DC_VALUE-=6;
+						fortosi(index);
+					}
+				}
+				if(!(PINB&(1<<PB4))){ //an PB4 patimeno
+					while(!(PINB&(1<<PB4))); //debounce
+					if(index<16){
+						index++;
+						DC_VALUE+=6;
+						fortosi(index);
+					}
+				}
+				
+			}
+		}
+		
+		//mode2
+		if(!(PIND&(1<<PD1))){ //an PD1 patithei mode2 mexri na patithei to PD0 gia mode1
+			while(PIND&(1<<PD0)){  //oso den allaxw mode
+				
+				ADCSRA|=(1<<ADSC); //start conversion
+				while(ADCSRA&(1<<ADSC)); //wait ADSC to become 0
+				(void)ADCL; //diavasma prwta ADC low
+				OCR1AL=ADCH;
+				
+		
+			}
+		}
+		
+		
+	}
+	
+}

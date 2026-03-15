@@ -1,0 +1,72 @@
+.include "m328PBdef.inc"
+.def A = r16
+.def B = r17
+.def C = r18
+.def D = r19
+.def E = r20
+.def F0 = r21
+.def F1 = r22
+
+reset:			
+;init stack pointer
+	ldi r26, LOW(RAMEND)
+	out SPL, r26
+	ldi r26, HIGH(RAMEND)
+	out SPH, r26
+
+;init variables
+	ldi A, 0x52
+	ldi B, 0x42
+	ldi C, 0x22
+	ldi D, 0x02
+
+	ldi r23, 5	;counter
+
+	rcall calc_F0
+	rcall calc_F1
+
+main_loop:		;allagi metavlitwn apo tin deyteri epanalipsi
+	ldi r24, 0x01
+	add A, r24
+	inc r24
+	add B, r24
+	inc r24
+	add C, r24
+	inc r24
+	add D, r24
+	rcall calc_F0
+	rcall calc_F1
+	dec r23
+	brne main_loop
+rjmp end_of_program
+
+calc_F0:
+	push A    
+
+	mov r25, B  
+	com r25    ;BN
+	com A      ;A=AN
+	and A, B   ;A=AN*B
+	and r25, D ;r25=BN*D
+	or A, r25  ;A=(AN*B)+(BN*D)
+	com A  
+	mov F0, A
+
+	pop A
+	ret
+
+calc_F1: 
+	push A
+	push B
+
+	or A, C   ;A=A+C
+	or B, D   ;B=B+D
+	and A, B  ;A=(A+C)+(B+D)
+	mov F1, A
+
+	pop B
+	pop A
+	ret
+
+end_of_program:
+	rjmp end_of_program
